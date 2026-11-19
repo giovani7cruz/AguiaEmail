@@ -1,0 +1,14 @@
+[BANCO]
+ConfigFirebird=..\Middleware\configFirebird.ini
+ClientLibrary=fbclient.dll
+
+[EMAIL]
+Intervalo=5
+Timeout=25000
+Limite=10
+CA=cacert.pem
+
+[LOG]
+Pasta=Logs
+Dias=30
+

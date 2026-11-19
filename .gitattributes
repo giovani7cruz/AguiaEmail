@@ -1,0 +1,8 @@
+*.pas text eol=crlf
+*.lpr text eol=crlf
+*.lpi text eol=lf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.service text eol=lf
+*.py text eol=lf
+

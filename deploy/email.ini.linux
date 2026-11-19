@@ -1,0 +1,12 @@
+[BANCO]
+ConfigFirebird=../middleware/configFirebird.ini
+
+[EMAIL]
+Intervalo=5
+Timeout=25000
+Limite=10
+CA=/etc/ssl/certs/ca-certificates.crt
+
+[LOG]
+Dias=30
+

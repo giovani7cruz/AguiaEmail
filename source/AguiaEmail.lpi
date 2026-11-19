@@ -1,0 +1,39 @@
+<?xml version='1.0' encoding='utf-8'?>
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="12" />
+    <General>
+      <Flags>
+        <MainUnitHasCreateFormStatements Value="False" />
+        <MainUnitHasTitleStatement Value="False" />
+      </Flags>
+      <Title Value="AguiaEmail" />
+      <UseAppBundle Value="False" />
+    </General>
+    <BuildModes>
+      <Item Name="Default" Default="True" />
+    </BuildModes>
+    <Units>
+      <Unit>
+        <Filename Value="AguiaEmail.lpr" />
+        <IsPartOfProject Value="True" />
+      </Unit>
+    </Units>
+  </ProjectOptions>
+  <CompilerOptions>
+    <Version Value="11" />
+    <Target>
+      <Filename Value="../bin/AguiaEmail" />
+    </Target>
+    <SearchPaths>
+      <OtherUnitFiles Value="../../../Delphi/Componentes/ACBr/Fontes/Terceiros/synalist" />
+      <UnitOutputDirectory Value="../lib/$(TargetCPU)-$(TargetOS)" />
+    </SearchPaths>
+    <Parsing>
+      <SyntaxOptions>
+        <SyntaxMode Value="Delphi" />
+        <UseAnsiStrings Value="True" />
+      </SyntaxOptions>
+    </Parsing>
+  </CompilerOptions>
+</CONFIG>

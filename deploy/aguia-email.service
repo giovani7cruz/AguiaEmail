@@ -1,0 +1,23 @@
+[Unit]
+Description=Aguia Email - fila SMTP local de NFS-e e boletos
+After=network-online.target firebird.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aguia
+Group=aguia
+WorkingDirectory=/opt/aguia/email
+ExecStart=/opt/aguia/email/AguiaEmail /opt/aguia/email/email.ini
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=180
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+
