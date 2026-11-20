@@ -54,7 +54,7 @@ procedure TEmailBanco.Pulso;
 var R: TSQLQuery;
 begin
   Iniciar;
-  R := Q('UPDATE OR INSERT INTO EMAIL_SERVICO (INTERNAL_COD,VERSAO,ATUALIZADO_EM) VALUES (1,''1.0'',CURRENT_TIMESTAMP) MATCHING(INTERNAL_COD)');
+  R := Q('UPDATE OR INSERT INTO EMAIL_SERVICO (INTERNAL_COD,VERSAO,ATUALIZADO_EM) VALUES (1,''1.1-nfe'',CURRENT_TIMESTAMP) MATCHING(INTERNAL_COD)');
   try R.ExecSQL; Tx.Commit; finally R.Free; end;
 end;
 procedure TEmailBanco.Recuperar;
@@ -134,11 +134,18 @@ end;
 function TEmailBanco.Documentos(var T: TEmailTrabalho; out A: TEmailAnexos): Boolean;
 var R, W: TSQLQuery; P: TBlobField; S: TMemoryStream; X: string; Status: Integer;
 begin
+  if (T.Tipo<>'nfse') and (T.Tipo<>'boleto') and (T.Tipo<>'nfe') then
+    raise EEmail.Create('Tipo de documento nao suportado.');
   Result := False; A := Default(TEmailAnexos); Iniciar;
   if T.Tipo = 'nfse' then
     R := Q('SELECT N.STATUS,N.NUMERO,N.XML,COALESCE(E.DANFSE,D.PDF) AS PDF FROM NFSE N ' +
       'LEFT JOIN NFSE_EMISSAO E ON E.ID_NFSE=N.ID_NFSE LEFT JOIN NFSE_DANFSE D ON D.ID_NFSE=N.ID_NFSE ' +
       'WHERE N.ID_NFSE=:ID AND N.ID_PRESTADOR=:E')
+  else if T.Tipo = 'nfe' then
+    R := Q('SELECT CASE WHEN D.CANCEL_DATA IS NOT NULL THEN 3 WHEN D.CSTAT IN (100,150) THEN 2 ELSE 0 END AS STATUS, '+
+      'N.NUMERO,N.XML,F.PDF FROM NOTAFISCAL N JOIN NFE_DADOS D ON D.COD_NOTAFISCAL=N.INTERNAL_COD '+
+      'LEFT JOIN NFE_DANFE F ON F.COD_NOTAFISCAL=N.INTERNAL_COD AND F.CANCELADA=0 '+
+      'WHERE N.INTERNAL_COD=:ID AND N.COD_EMPRESA=:E')
   else
     R := Q('SELECT B.SITUACAO AS STATUS, B.PDF FROM BOLETO_EMISSAO B JOIN CONTARECEBER R ON R.INTERNAL_COD=B.COD_CONTAREC ' +
       'WHERE B.INTERNAL_COD=:ID AND B.COD_EMPRESA=:E AND B.COD_USUARIO=:U AND R.COD_EMPRESA=:E ' +
@@ -154,7 +161,7 @@ begin
     begin
       R.Close; Tx.Commit; Exit;
     end;
-    if T.Tipo = 'nfse' then
+    if (T.Tipo = 'nfse') or (T.Tipo = 'nfe') then
     begin
       X := R.FieldByName('XML').AsString;
       if Trim(X) = '' then raise EEmail.Create('A nota autorizada esta sem XML.');
@@ -176,7 +183,7 @@ begin
       Result := True;
     end;
     R.Close;
-    if (T.Tipo = 'nfse') and not Result then
+    if ((T.Tipo = 'nfse') or (T.Tipo = 'nfe')) and not Result then
     begin
       W := Q('SELECT DOCUMENTO_PEDIDO FROM EMAIL_ENVIO WHERE INTERNAL_COD=:ID');
       try
@@ -185,9 +192,14 @@ begin
       finally W.Free; end;
       if Status = 0 then
       begin
-        W := Q('INSERT INTO NFSE_FILA (INTERNAL_COD,ID_NFSE,COD_EMPRESA,ACAO) ' +
-          'SELECT GEN_ID(GEN_NFSE_FILA_ID,1),:ID,:E,4 FROM RDB$DATABASE WHERE NOT EXISTS ' +
-          '(SELECT 1 FROM NFSE_FILA WHERE ID_NFSE=:ID AND COD_EMPRESA=:E AND SITUACAO IN (0,1))');
+        if T.Tipo = 'nfse' then
+          W := Q('INSERT INTO NFSE_FILA (INTERNAL_COD,ID_NFSE,COD_EMPRESA,ACAO) ' +
+            'SELECT GEN_ID(GEN_NFSE_FILA_ID,1),:ID,:E,4 FROM RDB$DATABASE WHERE NOT EXISTS ' +
+            '(SELECT 1 FROM NFSE_FILA WHERE ID_NFSE=:ID AND COD_EMPRESA=:E AND SITUACAO IN (0,1))')
+        else
+          W := Q('INSERT INTO NFE_FILA (INTERNAL_COD,COD_NOTAFISCAL,COD_EMPRESA,ACAO) ' +
+            'SELECT GEN_ID(GEN_NFE_FILA_ID,1),:ID,:E,5 FROM RDB$DATABASE WHERE NOT EXISTS ' +
+            '(SELECT 1 FROM NFE_FILA WHERE COD_NOTAFISCAL=:ID AND COD_EMPRESA=:E AND SITUACAO IN (0,1))');
         try W.ParamByName('ID').AsLargeInt := T.Origem; W.ParamByName('E').AsInteger := T.Empresa; W.ExecSQL; finally W.Free; end;
         W := Q('UPDATE EMAIL_ENVIO SET DOCUMENTO_PEDIDO=1 WHERE INTERNAL_COD=:ID');
         try W.ParamByName('ID').AsLargeInt := T.Id; W.ExecSQL; finally W.Free; end;
@@ -203,6 +215,11 @@ begin
   { Uma conexao SMTP pode demorar: rele o documento imediatamente antes do DATA. }
   if T.Tipo='nfse' then
     R := Q('SELECT STATUS,XML FROM NFSE WHERE ID_NFSE=:N AND ID_PRESTADOR=:E WITH LOCK')
+  else if T.Tipo='nfe' then
+    R := Q('SELECT D.CSTAT,D.CANCEL_DATA,(SELECT N.XML FROM NOTAFISCAL N WHERE '+
+      'N.INTERNAL_COD=D.COD_NOTAFISCAL AND N.COD_EMPRESA=:E) AS XML FROM NFE_DADOS D '+
+      'WHERE D.COD_NOTAFISCAL=:N AND EXISTS (SELECT 1 FROM NOTAFISCAL N WHERE '+
+      'N.INTERNAL_COD=:N AND N.COD_EMPRESA=:E) WITH LOCK')
   else
     R := Q('SELECT SALDO,BANCO_BAIXADO FROM CONTARECEBER WHERE INTERNAL_COD=:N AND COD_EMPRESA=:E WITH LOCK');
   try
@@ -212,6 +229,12 @@ begin
     begin
       if (R.FieldByName('STATUS').AsInteger<>2) or (R.FieldByName('XML').AsString<>T.Xml) then
         raise EEmail.Create('A nota mudou antes do envio. Prepare outra solicitacao.');
+    end
+    else if T.Tipo='nfe' then
+    begin
+      if not (R.FieldByName('CSTAT').AsInteger in [100,150]) or
+        not R.FieldByName('CANCEL_DATA').IsNull or (R.FieldByName('XML').AsString<>T.Xml) then
+        raise EEmail.Create('A nota mudou ou foi cancelada antes do envio. Prepare outra solicitacao.');
     end
     else if (R.FieldByName('SALDO').AsCurrency<=0) or (R.FieldByName('BANCO_BAIXADO').AsInteger=1) then
       raise EEmail.Create('O titulo foi baixado antes do envio.');
@@ -238,6 +261,8 @@ begin
     begin
       R.Close;
       if T.Tipo = 'nfse' then R.SQL.Text := 'UPDATE NFSE SET EMAIL_ENVIADO=1 WHERE ID_NFSE=:N AND ID_PRESTADOR=:E'
+      else if T.Tipo = 'nfe' then R.SQL.Text := 'UPDATE NFE_DADOS SET ENVIADO_EMAIL=1 WHERE COD_NOTAFISCAL=:N AND EXISTS '+
+        '(SELECT 1 FROM NOTAFISCAL N WHERE N.INTERNAL_COD=:N AND N.COD_EMPRESA=:E)'
       else R.SQL.Text := 'UPDATE CONTARECEBER SET EMAIL_ENVIADO=1 WHERE INTERNAL_COD=:N AND COD_EMPRESA=:E';
       R.ParamByName('N').AsLargeInt := T.Documento; R.ParamByName('E').AsInteger := T.Empresa; R.ExecSQL;
     end;

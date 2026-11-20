@@ -1,4 +1,4 @@
-# AguiaEmail
+﻿# AguiaEmail
 
 Serviço SMTP em Lazarus/FPC para Linux x64 e Windows x64. Consome a fila
 `EMAIL_ENVIO` no Firebird da instalação e usa `EMAIL_CONTA` e os vínculos de
@@ -84,3 +84,23 @@ da VM. Conferir pendências e manter backup antes de ativar a troca.
 
 Configurações reais, certificados privados, senhas, bancos, logs e executáveis
 não entram no Git.
+
+
+## NF-e/NFC-e do novo monitor (20/11/2026)
+
+Aplicar tambem o estrutural oficial 000660.aad, que acrescenta nfe aos tipos
+da EMAIL_ENVIO (sem dados ou ativacao por cliente). Atualizar e reiniciar o
+servico antes de liberar notas/email-enfileirar no Middleware. O heartbeat
+1.1-nfe identifica este suporte; o Middleware recusa worker antigo/offline.
+
+NF-e/NFC-e proprias autorizadas e nao canceladas usam o PDF da NFE_DANFE e o
+XML da NOTAFISCAL. PDF ausente solicita acao 5 na NFE_FILA uma unica vez.
+O XML confirmado fica congelado na fila e e comparado antes do SMTP DATA;
+empresa, cancelamento e autorizacao sao revalidados. Anexos danfe-NUMERO.pdf
+e nfe.xml. O aceite SMTP marca NFE_DADOS.ENVIADO_EMAIL; nao confirma entrega.
+O Client permite conferir destinatario/assunto/mensagem e acompanhar o
+historico do usuario. Nenhum envio automatico foi acrescentado a autorizacao.
+
+Testes: 000660 aplicado duas vezes em cada banco descartavel; anexos UTF-8,
+nota cancelada, empresa incorreta e DANFE ausente. Revalidacao concorrente
+durante o SMTP exige AGUIA_TEST_SERVER; o Firebird embedded e exclusivo.

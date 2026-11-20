@@ -53,9 +53,12 @@ begin
   if Pdf<>'' then
   begin
     if T.Tipo='nfse' then Parte(L,Limite,'application/pdf','danfse.pdf',Pdf)
+    else if T.Tipo='nfe' then Parte(L,Limite,'application/pdf','danfe-'+T.Numero+'.pdf',Pdf)
     else Parte(L,Limite,'application/pdf','boleto-'+IntToStr(T.Documento)+'.pdf',Pdf);
   end;
-  if A.Xml<>'' then Parte(L,Limite,'application/xml; charset=UTF-8','nfse.xml',A.Xml);
+  if A.Xml<>'' then
+    if T.Tipo='nfe' then Parte(L,Limite,'application/xml; charset=UTF-8','nfe.xml',A.Xml)
+    else Parte(L,Limite,'application/xml; charset=UTF-8','nfse.xml',A.Xml);
   L.Add('--'+Limite+'--');
 end;
 

@@ -156,6 +156,11 @@ class QueueTest(unittest.TestCase):
                  "CREATE TABLE NFSE_DANFSE (ID_NFSE INTEGER PRIMARY KEY,PDF BLOB);\n"
                  "CREATE SEQUENCE GEN_NFSE_FILA_ID;\n"
                  "CREATE TABLE NFSE_FILA (INTERNAL_COD BIGINT,ID_NFSE INTEGER,COD_EMPRESA INTEGER,ACAO INTEGER,SITUACAO INTEGER DEFAULT 0);\n"
+                 "CREATE TABLE NOTAFISCAL (INTERNAL_COD INTEGER PRIMARY KEY,COD_EMPRESA INTEGER,NUMERO INTEGER,XML BLOB SUB_TYPE TEXT CHARACTER SET UTF8);\n"
+                 "CREATE TABLE NFE_DADOS (COD_NOTAFISCAL INTEGER PRIMARY KEY,CSTAT INTEGER,CANCEL_DATA TIMESTAMP,ENVIADO_EMAIL INTEGER);\n"
+                 "CREATE TABLE NFE_DANFE (COD_NOTAFISCAL INTEGER PRIMARY KEY,PDF BLOB,CANCELADA INTEGER);\n"
+                 "CREATE SEQUENCE GEN_NFE_FILA_ID;\n"
+                 "CREATE TABLE NFE_FILA (INTERNAL_COD BIGINT,COD_NOTAFISCAL INTEGER,COD_EMPRESA INTEGER,ACAO INTEGER,SITUACAO INTEGER DEFAULT 0);\n"
                  "CREATE TABLE CONTARECEBER (INTERNAL_COD INTEGER PRIMARY KEY,COD_EMPRESA INTEGER,SALDO NUMERIC(15,2),BANCO_BAIXADO INTEGER,COD_CONTACORRENTE INTEGER,EMAIL_ENVIADO INTEGER);\n"
                  "CREATE TABLE BOLETO_EMISSAO (INTERNAL_COD BIGINT PRIMARY KEY,COD_EMPRESA INTEGER,COD_USUARIO INTEGER,COD_CONTAREC INTEGER,COD_CONTACORRENTE INTEGER,SITUACAO INTEGER,PDF BLOB);\n",
                  create=True)
@@ -164,6 +169,12 @@ class QueueTest(unittest.TestCase):
         # DBUpdater confirma cada bloco. DDL dinamico precisa dessa fronteira
         # para que a proxima instrucao veja as tabelas (o .aad nao tem COMMIT).
         self.sql(MIGRATION.read_text(encoding='utf-8-sig').replace('\nEND^\n', '\nEND^\nCOMMIT^\n'))
+        migration_nfe = MIGRATION.with_name('000660.aad').read_text(encoding='utf-8-sig')
+        for _ in range(2):  # estrutural idempotente, sem dados de cliente
+            self.sql(migration_nfe.replace('END^', 'END^\nCOMMIT^'))
+        self.sql("INSERT INTO NOTAFISCAL VALUES (579,1,579,'<nfeProc>NF-e José</nfeProc>');\n"
+                 "INSERT INTO NFE_DADOS VALUES (579,100,NULL,0);\n"
+                 "INSERT INTO NFE_DANFE VALUES (579,CAST('%PDF-1.7 DANFE' AS BLOB),0);\n")
         self.sql(f"INSERT INTO UCTABUSERS VALUES (1,0,'Operador');\n"
                  f"INSERT INTO EMAIL_CONTA VALUES (2,'empresa@example.com','localhost',{self.sink.server_address[1]},'smtp-test','dGVzdC1zZWNyZXQ=',0,1,'Empresa','financeiro@example.com');\n"
                  "INSERT INTO EMAIL_CONTA_USUARIO VALUES (2,1,1);\n"
@@ -204,7 +215,7 @@ class QueueTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
 
     def enqueue(self, kind='nfse', job=1):
-        source, doc = (81, 81) if kind == 'nfse' else (123, 7)
+        source, doc = (81, 81) if kind == 'nfse' else ((579, 579) if kind == 'nfe' else (123, 7))
         self.sql(f"INSERT INTO EMAIL_ENVIO (INTERNAL_COD,COD_EMPRESA,COD_USUARIO,COD_EMAIL,TIPO,ORIGEM_ID,DOCUMENTO_ID,CHAVE,ATIVO,REMETENTE,DESTINATARIO,ASSUNTO,CORPO_TEXTO,CORPO_HTML) "
                  f"VALUES ({job},1,1,2,'{kind}',{source},{doc},'00000000-0000-4000-8000-{job:012}', '{kind}:{doc}',"
                  "'empresa@example.com','cliente@example.com','Serviço José','Olá, João. Serviço aceito.','<p>Olá, João.</p>');")
@@ -237,6 +248,52 @@ class QueueTest(unittest.TestCase):
         self.assertEqual(attachments['nfse.xml'].decode('utf-8'), '<NFSe>Serviço José</NFSe>')
         self.assertIn('aguia-00000000-', message['Message-ID'])
         self.assertIn('1', self.sql('SET HEADING OFF; SELECT EMAIL_ENVIADO FROM NFSE WHERE ID_NFSE=81;').stdout)
+
+    def test_nfe_pdf_xml_and_legacy_flag(self):
+        self.enqueue('nfe')
+        self.worker()
+        self.assertEqual(self.state(), 'sent')
+        self.worker()
+        self.assertEqual(len(self.sink.messages), 1)
+        message = BytesParser(policy=email.policy.default).parsebytes(self.sink.messages[0])
+        attachments = {p.get_filename(): p.get_payload(decode=True) for p in message.iter_attachments()}
+        self.assertEqual(attachments['danfe-579.pdf'], b'%PDF-1.7 DANFE')
+        self.assertEqual(attachments['nfe.xml'].decode('utf-8'), '<nfeProc>NF-e José</nfeProc>')
+        self.assertIn('1', self.sql('SET HEADING OFF; SELECT ENVIADO_EMAIL FROM NFE_DADOS WHERE COD_NOTAFISCAL=579;').stdout)
+
+    @unittest.skipUnless(SERVER, 'Revalidacao concorrente exige Firebird servidor; embedded e exclusivo.')
+    def test_nfe_cancelled_before_data(self):
+        self.enqueue('nfe')
+        self.sink.before_recipient = lambda: self.sql("UPDATE NFE_DADOS SET CANCEL_DATA=CURRENT_TIMESTAMP WHERE COD_NOTAFISCAL=579;")
+        self.worker()
+        self.assertEqual(self.state(), 'failed')
+        self.assertEqual(self.sink.messages, [])
+
+    def test_nfe_cancelled_refused(self):
+        self.enqueue('nfe')
+        self.sql('UPDATE NFE_DADOS SET CANCEL_DATA=CURRENT_TIMESTAMP WHERE COD_NOTAFISCAL=579;')
+        self.worker()
+        self.assertEqual(self.state(), 'failed')
+        self.assertEqual(self.sink.messages, [])
+
+    def test_nfe_wrong_company_refused(self):
+        self.enqueue('nfe')
+        self.sql('UPDATE NOTAFISCAL SET COD_EMPRESA=2 WHERE INTERNAL_COD=579;')
+        self.worker()
+        self.assertEqual(self.state(), 'failed')
+        self.assertEqual(self.sink.messages, [])
+
+    def test_nfe_missing_pdf_requests_emitter_once(self):
+        self.enqueue('nfe')
+        self.sql('DELETE FROM NFE_DANFE;')
+        self.worker()
+        self.assertEqual(self.state(), 'pending')
+        self.sql('UPDATE EMAIL_ENVIO SET PROXIMA_TENTATIVA=CURRENT_TIMESTAMP;')
+        self.worker()
+        self.assertEqual(self.state(), 'pending')
+        count = self.sql('SET HEADING OFF; SELECT COUNT(*) FROM NFE_FILA WHERE COD_NOTAFISCAL=579 AND ACAO=5;').stdout
+        self.assertEqual(count.strip(), '1')
+        self.assertEqual(self.sink.messages, [])
 
     def test_boleto_and_legacy_flag(self):
         self.enqueue('boleto')
