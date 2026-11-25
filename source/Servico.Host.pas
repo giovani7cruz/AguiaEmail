@@ -47,7 +47,8 @@ procedure PrepararAmbiente;
 
 { Trata --instalar-servico/--remover-servico/--parar-servico. True = era um
   desses (o programa sai com ACodigo); False = seguir normalmente. }
-function ComandoServico(const ANome, AExibicao, ADescricao: string; out ACodigo: Integer): Boolean;
+function ComandoServico(const ANome, AExibicao, ADescricao: string; out ACodigo: Integer;
+  const AArgumentos: string = ''): Boolean;
 
 { Roda ATrabalho: direto no console; sob o SCM com --servico. No serviço o
   pedido de parada liga AParar^ e o SCM é avisado até ATrabalho voltar; o
@@ -56,6 +57,7 @@ procedure Rodar(const ANome: string; ATrabalho: TTrabalho; AParar: PBoolean);
 
 { Argumento que não é opção (--algo): o arquivo .ini, ou '' se não veio. }
 function ArgumentoIni: string;
+function LinhaComandoServico(const Exe, Ini, Argumentos: string): string;
 
 implementation
 
@@ -72,6 +74,13 @@ begin
   for K := 1 to ParamCount do
     if Copy(ParamStr(K), 1, 2) <> '--' then
       Result := ParamStr(K);
+end;
+
+function LinhaComandoServico(const Exe, Ini, Argumentos: string): string;
+begin
+  Result:='"'+Exe+'" --servico';
+  if Ini<>'' then Result:=Result+' "'+Ini+'"';
+  if Argumentos<>'' then Result:=Result+' '+Argumentos;
 end;
 
 function PastaDoExe: string;
@@ -455,7 +464,7 @@ begin
   end;
 end;
 
-function InstalarServico(AScm: SC_HANDLE; const ANome, AExibicao, ADescricao: string): Integer;
+function InstalarServico(AScm: SC_HANDLE; const ANome, AExibicao, ADescricao, AArgumentos: string): Integer;
 var
   S: SC_HANDLE;
   Binario, Ini: UnicodeString;
@@ -465,10 +474,9 @@ var
   Info: TDwordInfo;
   K: Integer;
 begin
-  Binario := '"' + UnicodeString(ExpandFileName(ParamStr(0))) + '" --servico';
   Ini := UnicodeString(ArgumentoIni);
-  if Ini <> '' then
-    Binario := Binario + ' "' + UnicodeString(ExpandFileName(string(Ini))) + '"';
+  if Ini<>'' then Ini:=UnicodeString(ExpandFileName(string(Ini)));
+  Binario := UnicodeString(LinhaComandoServico(ExpandFileName(ParamStr(0)),string(Ini),AArgumentos));
   S := OpenServiceW(AScm, PWideChar(UnicodeString(ANome)), SERVICE_ALL_ACCESS);
   if S <> 0 then
   begin
@@ -553,7 +561,8 @@ begin
   end;
 end;
 
-function ComandoServico(const ANome, AExibicao, ADescricao: string; out ACodigo: Integer): Boolean;
+function ComandoServico(const ANome, AExibicao, ADescricao: string; out ACodigo: Integer;
+  const AArgumentos: string): Boolean;
 var
   K: Integer;
   Cmd: string;
@@ -581,7 +590,7 @@ begin
   end;
   try
     if Cmd = '--instalar-servico' then
-      ACodigo := InstalarServico(Scm, ANome, AExibicao, ADescricao)
+      ACodigo := InstalarServico(Scm, ANome, AExibicao, ADescricao, AArgumentos)
     else if Cmd = '--remover-servico' then
       ACodigo := RemoverServico(Scm, ANome)
     else
@@ -602,7 +611,8 @@ procedure PrepararAmbiente;
 begin
 end;
 
-function ComandoServico(const ANome, AExibicao, ADescricao: string; out ACodigo: Integer): Boolean;
+function ComandoServico(const ANome, AExibicao, ADescricao: string; out ACodigo: Integer;
+  const AArgumentos: string): Boolean;
 begin
   ACodigo := 0;
   Result := False;
